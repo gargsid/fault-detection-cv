@@ -1,17 +1,12 @@
 import torch
 import torch.nn as nn 
-from torchvision.io import read_image
-from torchvision.models import resnet50, ResNet50_Weights
 from torchvision.transforms import v2
 
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-import os, sys, random
+from torch.utils.data import DataLoader
 import numpy as np
 
 from torchmetrics.classification import BinaryRecall, BinaryF1Score
-from focal_loss.focal_loss import FocalLoss
 
-from tqdm import tqdm
 import wandb 
 
 from fault_detection_model import FaultDetectionModel
@@ -33,13 +28,6 @@ wandb.init(
 )
 
 dataroot = 'CV-image-assignment/images_set' 
-# print(os.listdir('CV-image-assignment/images_set/Defective/train'))
-# print(os.listdir('CV-image-assignment/images_set/Defective/test'))
-# print(os.listdir('CV-image-assignment/images_set/Non_Defective/train'))
-# print(os.listdir('CV-image-assignment/images_set/Non_Defective/test'))
-# weights = ResNet50_Weights.DEFAULT
-# model = resnet50(weights=weights)
-# model.fc = nn.Linear(in_features=2048, out_features=2, bias=True)
 
 model = FaultDetectionModel(num_classes=2).to(device)
 
@@ -56,25 +44,13 @@ test_preprocess = v2.Compose([
     v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-# preprocess = weights.transforms()
-
 train_dataset = iPhoneDataset(dataroot, train_preprocess, 'train')
 test_dataset = iPhoneDataset(dataroot, test_preprocess, 'test')
 
-class_counts = np.array([len(train_dataset.non_defective_paths), len(train_dataset.defective_paths)])
-weights_per_class = [1, 1]
-weights_per_class[0] = 1
-weights_per_class[1] = 1.2
-weights_per_image = [weights_per_class[label] for label in train_dataset.labels]
-sampler = WeightedRandomSampler(weights=weights_per_image, num_samples=len(train_dataset), replacement=True)
-
-# train_loader = DataLoader(train_dataset, batch_size=32, sampler=sampler)
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-# train_loader = DataLoader(train_dataset, batch_size=32)
 test_loader = DataLoader(test_dataset, batch_size=32)
 
 criterion = nn.CrossEntropyLoss()
-# sigmoid = torch.nn.Sigmoid()
 
 lrate = config['lrate']
 weight_decay = config['weight_decay']
@@ -104,10 +80,6 @@ for epoch in range(epochs):
         images = images.to(device)
         labels = labels.to(device)
         outputs = model(images)
-        # for l, o in zip(labels, outputs):
-        #     print('lablel:', l, 'output:',o)
-        print('labels:', torch.sum(labels))
-        # loss = criterion(sigmoid(outputs), labels)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
@@ -130,10 +102,7 @@ for epoch in range(epochs):
     })
 
     print(f'epoch:{epoch}/{epochs} train_loss: {epoch_loss} train_recall: {train_recall} train_f1:{train_f1}')
-    # print('labels; num_okay:', (train_preds==0).sum(), 'num_def:', (train_preds==1).sum())
-    # print('preds; num_okay:', (train_labels==0).sum(), 'num_def:', (train_labels==1).sum())
 
-    # if epoch % 10 == 0:
     model.eval()
     val_loss = 0. 
     val_preds = []
@@ -143,11 +112,9 @@ for epoch in range(epochs):
         images = images.to(device)
         labels = labels.to(device)
         outputs = model(images)
-        # loss = criterion(sigmoid(outputs), labels)
         loss = criterion(outputs, labels)
         val_loss += loss.item()
         preds = torch.argmax(outputs, dim=-1)
-        print('val_preds:', torch.sum(preds))
         val_preds += preds 
         val_labels += labels
     
@@ -170,7 +137,6 @@ for epoch in range(epochs):
     })
 
     model.train()
-    # sys.exit()
 
 model.load_state_dict(torch.load(f'saved_models/fault_prediction_model_ep_{epochs}.pt'))
 model.eval()

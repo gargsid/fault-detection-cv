@@ -2,10 +2,8 @@ import torch
 import torch
 import torch.nn as nn 
 from torchvision.io import read_image
-from torchvision.models import resnet50, ResNet50_Weights
 from torchvision.transforms import v2
 
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import os, sys, random
 import numpy as np
 
