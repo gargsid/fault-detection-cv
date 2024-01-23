@@ -43,7 +43,6 @@ Great! We are able to identify all the defective cases and got only 1 False posi
 |---|---|
 | Recall  | 1  | 
 | F1  | 0.876  | 
-|---|---|
 
 
 ### Training the model
