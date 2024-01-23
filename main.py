@@ -14,42 +14,17 @@ from focal_loss.focal_loss import FocalLoss
 from tqdm import tqdm
 import wandb 
 
+from fault_detection_model import FaultDetectionModel
+from data_utils import iPhoneDataset
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else torch.device('cpu'))
 print('device:', device)
 
-class iPhoneDataset(Dataset):
-    def __init__(self, dataroot, transforms, mode='train'):
-        self.mode = mode # train, val, test
-        self.transforms = transforms
-
-        self.dataroot = dataroot
-
-        if mode == 'train':
-            defective_root = os.path.join(dataroot, 'Defective/train')
-            non_defective_root = os.path.join(dataroot, 'Non_Defective/train')
-        else:
-            defective_root = os.path.join(dataroot, 'Defective/test')
-            non_defective_root = os.path.join(dataroot, 'Non_Defective/test')
-
-        self.defective_paths = [os.path.join(defective_root, image_name) for image_name in os.listdir(defective_root)]
-        self.non_defective_paths = [os.path.join(non_defective_root, image_name) for image_name in os.listdir(non_defective_root)]
-
-        self.files = self.defective_paths + self.non_defective_paths
-        self.labels = [1 for _ in range(len(self.defective_paths))] + [0 for _ in range(len(self.non_defective_paths))]
-
-    def __len__(self):
-        return len(self.files)
-
-    def __getitem__(self, idx):
-        image = self.transforms(read_image(self.files[idx]))
-        label = self.labels[idx]
-        return image, label
-    
 config = {
-    'lrate' : 1e-5,
+    'lrate' : 1e-4,
     'batch_size' : 32,
-    'epochs' : 10,
-    'weight_decay' : 1e-3,   
+    'epochs' : 30,
+    'weight_decay' : 1e-2,   
 }
 
 wandb.init(
@@ -58,28 +33,10 @@ wandb.init(
 )
 
 dataroot = 'CV-image-assignment/images_set' 
-
-class FaultDetectionModel(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.resnet_weights = ResNet50_Weights.DEFAULT
-        self.resnet = resnet50(weights=self.resnet_weights)
-        self.resnet.fc = nn.Linear(in_features=2048, out_features=1024, bias=True)
-        self.bn_1 = nn.BatchNorm1d(1024)
-        self.linear_1 = nn.Linear(in_features=1024, out_features=256, bias=True)
-        self.bn_2 = nn.BatchNorm1d(256)
-        self.linear_2 = nn.Linear(in_features=256, out_features=32, bias=True)
-        self.bn_3 = nn.BatchNorm1d(32)
-        self.logits = nn.Linear(in_features=32, out_features=num_classes, bias=True)
-        self.gelu = nn.GELU()
-
-    def forward(self, x):
-        x = self.gelu(self.bn_1(self.resnet(x)))
-        x = self.gelu(self.bn_2(self.linear_1(x)))
-        x = self.gelu(self.bn_3(self.linear_2(x)))
-        x = self.logits(x)
-        return x
-
+# print(os.listdir('CV-image-assignment/images_set/Defective/train'))
+# print(os.listdir('CV-image-assignment/images_set/Defective/test'))
+# print(os.listdir('CV-image-assignment/images_set/Non_Defective/train'))
+# print(os.listdir('CV-image-assignment/images_set/Non_Defective/test'))
 # weights = ResNet50_Weights.DEFAULT
 # model = resnet50(weights=weights)
 # model.fc = nn.Linear(in_features=2048, out_features=2, bias=True)
@@ -105,18 +62,19 @@ train_dataset = iPhoneDataset(dataroot, train_preprocess, 'train')
 test_dataset = iPhoneDataset(dataroot, test_preprocess, 'test')
 
 class_counts = np.array([len(train_dataset.non_defective_paths), len(train_dataset.defective_paths)])
-weights_per_class = 1 / class_counts
-weights_per_class[0] += 0.02 
-weights_per_class[1] -= 0.03
+weights_per_class = [1, 1]
+weights_per_class[0] = 1
+weights_per_class[1] = 1.2
 weights_per_image = [weights_per_class[label] for label in train_dataset.labels]
-
 sampler = WeightedRandomSampler(weights=weights_per_image, num_samples=len(train_dataset), replacement=True)
-train_loader = DataLoader(train_dataset, batch_size=32, sampler=sampler)
+
+# train_loader = DataLoader(train_dataset, batch_size=32, sampler=sampler)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 # train_loader = DataLoader(train_dataset, batch_size=32)
 test_loader = DataLoader(test_dataset, batch_size=32)
 
-criterion = FocalLoss(gamma=0.7)
-sigmoid = torch.nn.Sigmoid()
+criterion = nn.CrossEntropyLoss()
+# sigmoid = torch.nn.Sigmoid()
 
 lrate = config['lrate']
 weight_decay = config['weight_decay']
@@ -146,7 +104,11 @@ for epoch in range(epochs):
         images = images.to(device)
         labels = labels.to(device)
         outputs = model(images)
-        loss = criterion(sigmoid(outputs), labels)
+        # for l, o in zip(labels, outputs):
+        #     print('lablel:', l, 'output:',o)
+        print('labels:', torch.sum(labels))
+        # loss = criterion(sigmoid(outputs), labels)
+        loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
 
@@ -168,8 +130,8 @@ for epoch in range(epochs):
     })
 
     print(f'epoch:{epoch}/{epochs} train_loss: {epoch_loss} train_recall: {train_recall} train_f1:{train_f1}')
-    print('labels; num_okay:', (train_preds==0).sum(), 'num_def:', (train_preds==1).sum())
-    print('preds; num_okay:', (train_labels==0).sum(), 'num_def:', (train_labels==1).sum())
+    # print('labels; num_okay:', (train_preds==0).sum(), 'num_def:', (train_preds==1).sum())
+    # print('preds; num_okay:', (train_labels==0).sum(), 'num_def:', (train_labels==1).sum())
 
     # if epoch % 10 == 0:
     model.eval()
@@ -181,9 +143,11 @@ for epoch in range(epochs):
         images = images.to(device)
         labels = labels.to(device)
         outputs = model(images)
-        loss = criterion(sigmoid(outputs), labels)
+        # loss = criterion(sigmoid(outputs), labels)
+        loss = criterion(outputs, labels)
         val_loss += loss.item()
         preds = torch.argmax(outputs, dim=-1)
+        print('val_preds:', torch.sum(preds))
         val_preds += preds 
         val_labels += labels
     
@@ -197,7 +161,7 @@ for epoch in range(epochs):
     if best_recall < val_recall or (best_recall == val_recall and best_f1 < val_f1):
         best_recall = val_recall
         best_f1 = val_f1
-        torch.save(model.state_dict(), 'saved_models/fault_prediction_model.pt')
+        torch.save(model.state_dict(), f'saved_models/fault_prediction_model_ep_{epochs}.pt')
 
     wandb.log({
         'val_loss' : val_loss,
@@ -206,8 +170,9 @@ for epoch in range(epochs):
     })
 
     model.train()
+    # sys.exit()
 
-model.load_state_dict(torch.load('saved_models/fault_prediction_model.pt'))
+model.load_state_dict(torch.load(f'saved_models/fault_prediction_model_ep_{epochs}.pt'))
 model.eval()
 for images, val_labels in test_loader:
     outputs = model(images)
